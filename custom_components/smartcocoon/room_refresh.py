@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from pysmartcocoon.const import API_URL, EntityType
@@ -12,7 +13,17 @@ if TYPE_CHECKING:
     from pysmartcocoon.manager import SmartCocoonManager
 
 
-async def async_fetch_rooms(scmanager: SmartCocoonManager) -> dict[int, Room]:
+@dataclass(frozen=True, slots=True)
+class RefreshedRoom:
+    """A refreshed room and its best available current temperature."""
+
+    room: Room
+    current_temperature: float | None
+
+
+async def async_fetch_rooms(
+    scmanager: SmartCocoonManager,
+) -> dict[int, RefreshedRoom]:
     """Fetch rooms from the SmartCocoon API and refresh the manager cache.
 
     Unlike ``SmartCocoonManager.async_update_rooms``, API failures propagate
@@ -28,11 +39,29 @@ async def async_fetch_rooms(scmanager: SmartCocoonManager) -> dict[int, Room]:
         raise RequestError(msg)
 
     rooms: dict[int, Room] = {}
+    refreshed_rooms: dict[int, RefreshedRoom] = {}
     for item in response[entity]:
         room = Room(data=item)
         rooms[room.identifier] = room
+        external_sensor = item.get("external_sensor")
+        external_temperature = (
+            external_sensor.get("temperature")
+            if isinstance(external_sensor, dict)
+            else None
+        )
+        temperature = (
+            external_temperature
+            if external_temperature is not None
+            else room.temperature
+        )
+        refreshed_rooms[room.identifier] = RefreshedRoom(
+            room=room,
+            current_temperature=(
+                float(temperature) if temperature is not None else None
+            ),
+        )
 
     scmanager._rooms.clear()  # noqa: SLF001  # pylint: disable=protected-access
     scmanager._rooms.update(rooms)  # noqa: SLF001  # pylint: disable=protected-access
 
-    return rooms
+    return refreshed_rooms
