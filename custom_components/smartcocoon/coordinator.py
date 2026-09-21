@@ -30,7 +30,9 @@ class RoomTemperatureReading:
     temperature: float
 
 
-class SmartCocoonRoomCoordinator(DataUpdateCoordinator):  # type: ignore[misc]
+class SmartCocoonRoomCoordinator(
+    DataUpdateCoordinator[dict[int, RoomTemperatureReading]],  # type: ignore[misc]
+):
     """Poll SmartCocoon for current room temperatures."""
 
     def __init__(

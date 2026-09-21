@@ -774,7 +774,7 @@ async def test_async_setup_entry(hass: HomeAssistant) -> None:
         ) as mock_coordinator_class,
     ):
         mock_coordinator = MagicMock()
-        mock_coordinator.async_config_entry_first_refresh = AsyncMock()
+        mock_coordinator.async_refresh = AsyncMock()
         mock_coordinator_class.return_value = mock_coordinator
 
         result = await async_setup_entry(hass, config_entry)
@@ -783,7 +783,7 @@ async def test_async_setup_entry(hass: HomeAssistant) -> None:
         assert DOMAIN in hass.data
         assert config_entry.entry_id in hass.data[DOMAIN]
         mock_forward.assert_called_once()
-        mock_coordinator.async_config_entry_first_refresh.assert_awaited_once()
+        mock_coordinator.async_refresh.assert_awaited_once()
 
 
 async def test_async_unload_entry(hass: HomeAssistant) -> None:

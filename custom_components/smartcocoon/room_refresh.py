@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pysmartcocoon.const import API_URL, EntityType
-from pysmartcocoon.errors import RequestError, UnauthorizedError
+from pysmartcocoon.errors import RequestError
 from pysmartcocoon.room import Room
 
 if TYPE_CHECKING:
@@ -19,12 +19,9 @@ async def async_fetch_rooms(scmanager: SmartCocoonManager) -> dict[int, Room]:
     instead of returning stale cached room data.
     """
     entity = EntityType.ROOMS.value
-    try:
-        response = await scmanager._api.async_request(  # noqa: SLF001
-            "GET", f"{API_URL}{entity}"
-        )
-    except (UnauthorizedError, RequestError):
-        raise
+    response = await scmanager._api.async_request(  # noqa: SLF001  # pylint: disable=protected-access
+        "GET", f"{API_URL}{entity}"
+    )
 
     if not response or entity not in response:
         msg = "Unexpected SmartCocoon rooms API response"
@@ -35,7 +32,7 @@ async def async_fetch_rooms(scmanager: SmartCocoonManager) -> dict[int, Room]:
         room = Room(data=item)
         rooms[room.identifier] = room
 
-    scmanager._rooms.clear()  # noqa: SLF001
-    scmanager._rooms.update(rooms)  # noqa: SLF001
+    scmanager._rooms.clear()  # noqa: SLF001  # pylint: disable=protected-access
+    scmanager._rooms.update(rooms)  # noqa: SLF001  # pylint: disable=protected-access
 
     return rooms

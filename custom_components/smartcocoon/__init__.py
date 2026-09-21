@@ -161,14 +161,21 @@ class SmartCocoonController:
         self._room_coordinator = coordinator
 
     async def async_stop(self) -> None:
-        """Stop the SmartCocoon Manager and cleanup resources."""
-        if self._room_coordinator:
-            self._room_coordinator.async_shutdown()
-            self._room_coordinator = None
+        """Stop connection monitoring.
+
+        The room coordinator registers ``async_shutdown`` on config entry unload.
+        """
         if self._connection_monitor:
             await self._connection_monitor.stop_monitoring()
             self._connection_monitor = None
         _LOGGER.debug("SmartCocoon services stopped")
+
+    async def async_stop_after_failed_setup(self) -> None:
+        """Release resources when setup fails after ``async_start``."""
+        if self._room_coordinator is not None:
+            await self._room_coordinator.async_shutdown()
+            self._room_coordinator = None
+        await self.async_stop()
 
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
@@ -218,18 +225,22 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     room_coordinator = SmartCocoonRoomCoordinator(
         hass, smartcocoon.scmanager, config_entry
     )
-    await room_coordinator.async_config_entry_first_refresh()
     smartcocoon.set_room_coordinator(room_coordinator)
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][config_entry.entry_id] = smartcocoon
 
-    await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
-
-    # Register services
-    await _async_register_services(hass, smartcocoon)
-
-    config_entry.async_on_unload(config_entry.add_update_listener(async_update_options))
+    try:
+        await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
+        await room_coordinator.async_refresh()
+        await _async_register_services(hass, smartcocoon)
+        config_entry.async_on_unload(
+            config_entry.add_update_listener(async_update_options)
+        )
+    except Exception:
+        await smartcocoon.async_stop_after_failed_setup()
+        hass.data[DOMAIN].pop(config_entry.entry_id, None)
+        raise
 
     return True
 

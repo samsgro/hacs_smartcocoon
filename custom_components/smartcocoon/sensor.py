@@ -33,20 +33,31 @@ async def async_setup_entry(
 
     smartcocoon: SmartCocoonController = hass.data[DOMAIN][config_entry.entry_id]
     coordinator = smartcocoon.room_coordinator
-    if coordinator is None or coordinator.data is None:
-        _LOGGER.debug("Room temperature coordinator not ready; skipping sensors")
+    if coordinator is None:
+        _LOGGER.debug("Room temperature coordinator missing; skipping sensors")
+        return
+
+    room_ids: set[int] = set()
+    if coordinator.data:
+        room_ids.update(coordinator.data)
+    scmanager = smartcocoon.scmanager
+    if scmanager is not None:
+        room_ids.update(scmanager.rooms)
+
+    if not room_ids:
+        _LOGGER.debug("No SmartCocoon rooms discovered for temperature sensors")
         return
 
     entities = [
         SmartCocoonRoomTemperatureSensor(coordinator, room_id)
-        for room_id in sorted(coordinator.data)
+        for room_id in sorted(room_ids)
     ]
     async_add_entities(entities)
 
     _LOGGER.debug("Completed room temperature sensor setup")
 
 
-class SmartCocoonRoomTemperatureSensor(CoordinatorEntity, SensorEntity):
+class SmartCocoonRoomTemperatureSensor(CoordinatorEntity, SensorEntity):  # type: ignore[misc]
     """A SmartCocoon room current-temperature sensor."""
 
     _attr_device_class = SensorDeviceClass.TEMPERATURE
@@ -71,14 +82,17 @@ class SmartCocoonRoomTemperatureSensor(CoordinatorEntity, SensorEntity):
             manufacturer="SmartCocoon",
             model="Room",
         )
-        self._attr_name = "Temperature"
 
     @property
     def _reading(self) -> RoomTemperatureReading | None:
         """Return the coordinator reading for this room, if present."""
-        if self.coordinator.data is None:
+        data = self.coordinator.data
+        if not data:
             return None
-        return self.coordinator.data.get(self._room_id)
+        value = data.get(self._room_id)
+        if not isinstance(value, RoomTemperatureReading):
+            return None
+        return value
 
     @property
     def native_value(self) -> float | None:
