@@ -43,6 +43,11 @@ async def async_fetch_rooms(
     for item in response[entity]:
         room = Room(data=item)
         rooms[room.identifier] = room
+        for fan_payload in item.get("fans", []):
+            fan_id = str(fan_payload.get("fan_id", ""))
+            fan = scmanager.fans.get(fan_id)
+            if fan is not None:
+                await fan.async_update_api_data(fan_payload)
         external_sensor = item.get("external_sensor")
         external_temperature = (
             external_sensor.get("temperature")

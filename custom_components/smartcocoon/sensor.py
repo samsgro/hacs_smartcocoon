@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import logging
 
+from pysmartcocoon.manager import SmartCocoonManager
+
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfTemperature
+from homeassistant.const import PERCENTAGE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -63,6 +65,15 @@ async def async_setup_entry(
     config_entry.async_on_unload(coordinator.async_add_listener(_add_discovered_rooms))
     _add_discovered_rooms()
 
+    scmanager = smartcocoon.scmanager
+    if scmanager is not None:
+        async_add_entities(
+            [
+                SmartCocoonObservedFanSpeedSensor(coordinator, scmanager, fan_id)
+                for fan_id in sorted(scmanager.fans)
+            ]
+        )
+
     _LOGGER.debug("Completed room temperature sensor setup")
 
 
@@ -70,6 +81,7 @@ class SmartCocoonRoomTemperatureSensor(CoordinatorEntity, SensorEntity):  # type
     """A SmartCocoon room current-temperature sensor."""
 
     _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_force_update = True
     _attr_has_entity_name = True
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -110,3 +122,55 @@ class SmartCocoonRoomTemperatureSensor(CoordinatorEntity, SensorEntity):  # type
         if reading is None:
             return None
         return reading.temperature
+
+
+class SmartCocoonObservedFanSpeedSensor(
+    CoordinatorEntity,  # type: ignore[misc]
+    SensorEntity,  # type: ignore[misc]
+):
+    """Actual SmartCocoon fan speed observed from the rooms API."""
+
+    _attr_force_update = True
+    _attr_has_entity_name = True
+    _attr_name = "Observed Fan Speed"
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(
+        self,
+        coordinator: SmartCocoonRoomCoordinator,
+        scmanager: SmartCocoonManager,
+        fan_id: str,
+    ) -> None:
+        """Initialize the observed fan-speed sensor."""
+        super().__init__(coordinator)
+        self._scmanager = scmanager
+        self._fan_id = fan_id
+        self._attr_unique_id = f"{DOMAIN}_fan_{fan_id}_observed_speed".lower()
+        fan = self._scmanager.fans[fan_id]
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"smartcocoon_fan_{fan_id}")},
+            name=f"{fan.room_name}:{fan_id}",
+            manufacturer="SmartCocoon",
+            model="Smart Vent",
+        )
+
+    @property
+    def available(self) -> bool:
+        """Return whether both the observation stream and fan are available."""
+        fan = self._scmanager.fans.get(self._fan_id)
+        return (
+            super().available
+            and fan is not None
+            and bool(getattr(fan, "connected", False))
+        )
+
+    @property
+    def native_value(self) -> int | None:
+        """Return effective speed: zero while off, configured power while on."""
+        fan = self._scmanager.fans.get(self._fan_id)
+        if fan is None:
+            return None
+        if not bool(getattr(fan, "fan_on", False)):
+            return 0
+        return int(fan.speed_pct)
