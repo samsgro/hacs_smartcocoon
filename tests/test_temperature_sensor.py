@@ -218,12 +218,12 @@ async def test_sensor_setup_adds_rooms_discovered_after_platform_setup(
 
 
 async def test_coordinator_poll_interval(hass: HomeAssistant) -> None:
-    """Room coordinator refreshes on a 60-second interval."""
+    """Room coordinator refreshes on a five-minute interval."""
     scmanager = _mock_scmanager()
     coordinator = SmartCocoonRoomCoordinator(hass, scmanager, _config_entry())
 
     assert coordinator.update_interval == ROOM_TEMPERATURE_UPDATE_INTERVAL
-    assert coordinator.update_interval == timedelta(seconds=60)
+    assert coordinator.update_interval == timedelta(minutes=5)
 
 
 async def test_coordinator_refresh_updates_data(hass: HomeAssistant) -> None:
