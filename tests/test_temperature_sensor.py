@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -237,6 +238,23 @@ async def test_coordinator_refresh_updates_data(hass: HomeAssistant) -> None:
     assert coordinator.data is not None
     assert coordinator.data[1].temperature == 20.5
     assert coordinator.data[2].temperature == 18.25
+
+
+async def test_coordinator_prefers_external_sensor_temperature(
+    hass: HomeAssistant,
+) -> None:
+    """Use the physical room sensor when the top-level room value is null."""
+    payload = deepcopy(ROOM_API_PAYLOAD)
+    payload["rooms"][0]["temperature"] = None
+    payload["rooms"][0]["external_sensor"] = {"temperature": 23.34}
+    scmanager = _mock_scmanager()
+    scmanager._api.async_request = AsyncMock(return_value=payload)
+    coordinator = SmartCocoonRoomCoordinator(hass, scmanager, _config_entry())
+
+    await coordinator.async_refresh()
+
+    assert coordinator.data is not None
+    assert coordinator.data[1].temperature == 23.34
 
 
 async def test_api_failure_marks_coordinator_stale(hass: HomeAssistant) -> None:

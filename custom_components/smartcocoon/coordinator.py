@@ -27,7 +27,7 @@ class RoomTemperatureReading:
 
     room_id: int
     name: str
-    temperature: float
+    temperature: float | None
 
 
 class SmartCocoonRoomCoordinator(
@@ -61,8 +61,8 @@ class SmartCocoonRoomCoordinator(
         return {
             room_id: RoomTemperatureReading(
                 room_id=room_id,
-                name=room.name,
-                temperature=room.temperature,
+                name=refreshed_room.room.name,
+                temperature=refreshed_room.current_temperature,
             )
-            for room_id, room in rooms.items()
+            for room_id, refreshed_room in rooms.items()
         }
