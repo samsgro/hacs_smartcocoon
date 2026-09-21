@@ -26,6 +26,7 @@ from custom_components.smartcocoon.coordinator import (
 from custom_components.smartcocoon.fan import SmartCocoonFan
 from custom_components.smartcocoon.room_refresh import async_fetch_rooms
 from custom_components.smartcocoon.sensor import (
+    SmartCocoonObservedFanSpeedSensor,
     SmartCocoonRoomTemperatureSensor,
     async_setup_entry as sensor_async_setup_entry,
 )
@@ -144,15 +145,24 @@ async def test_multi_room_sensor_setup(hass: HomeAssistant) -> None:
     controller.scmanager = scmanager
     hass.data[DOMAIN] = {config_entry.entry_id: controller}
 
-    added: list[SmartCocoonRoomTemperatureSensor] = []
+    added: list[object] = []
 
-    def capture(entities: list[SmartCocoonRoomTemperatureSensor]) -> None:
+    def capture(entities: list[object]) -> None:
         added.extend(entities)
 
     await sensor_async_setup_entry(hass, config_entry, capture)
 
-    assert len(added) == 2
-    assert {entity._room_id for entity in added} == {1, 2}
+    room_sensors = [
+        entity
+        for entity in added
+        if isinstance(entity, SmartCocoonRoomTemperatureSensor)
+    ]
+    assert len(room_sensors) == 2
+    assert {entity._room_id for entity in room_sensors} == {1, 2}
+    assert (
+        sum(isinstance(entity, SmartCocoonObservedFanSpeedSensor) for entity in added)
+        == 1
+    )
 
 
 async def test_sensor_setup_uses_manager_rooms_when_refresh_not_ready(
@@ -170,16 +180,21 @@ async def test_sensor_setup_uses_manager_rooms_when_refresh_not_ready(
     controller.scmanager = scmanager
     hass.data[DOMAIN] = {config_entry.entry_id: controller}
 
-    added: list[SmartCocoonRoomTemperatureSensor] = []
+    added: list[object] = []
 
-    def capture(entities: list[SmartCocoonRoomTemperatureSensor]) -> None:
+    def capture(entities: list[object]) -> None:
         added.extend(entities)
 
     await sensor_async_setup_entry(hass, config_entry, capture)
 
-    assert len(added) == 1
-    assert added[0]._room_id == 3
-    assert added[0].available is False
+    room_sensors = [
+        entity
+        for entity in added
+        if isinstance(entity, SmartCocoonRoomTemperatureSensor)
+    ]
+    assert len(room_sensors) == 1
+    assert room_sensors[0]._room_id == 3
+    assert room_sensors[0].available is False
 
 
 async def test_sensor_setup_adds_rooms_discovered_after_platform_setup(
@@ -195,26 +210,36 @@ async def test_sensor_setup_adds_rooms_discovered_after_platform_setup(
     controller.scmanager = scmanager
     hass.data[DOMAIN] = {config_entry.entry_id: controller}
 
-    added: list[SmartCocoonRoomTemperatureSensor] = []
+    added: list[object] = []
 
-    def capture(entities: list[SmartCocoonRoomTemperatureSensor]) -> None:
+    def capture(entities: list[object]) -> None:
         added.extend(entities)
 
     await sensor_async_setup_entry(hass, config_entry, capture)
-    assert not added
+    assert not any(
+        isinstance(entity, SmartCocoonRoomTemperatureSensor) for entity in added
+    )
 
     coordinator.async_set_updated_data(
         {1: RoomTemperatureReading(1, "Living Room", 20.5)}
     )
 
-    assert len(added) == 1
-    assert added[0]._room_id == 1
-    assert added[0].native_value == 20.5
+    room_sensors = [
+        entity
+        for entity in added
+        if isinstance(entity, SmartCocoonRoomTemperatureSensor)
+    ]
+    assert len(room_sensors) == 1
+    assert room_sensors[0]._room_id == 1
+    assert room_sensors[0].native_value == 20.5
 
     coordinator.async_set_updated_data(
         {1: RoomTemperatureReading(1, "Living Room", 21.0)}
     )
-    assert len(added) == 1
+    assert (
+        sum(isinstance(entity, SmartCocoonRoomTemperatureSensor) for entity in added)
+        == 1
+    )
 
 
 async def test_coordinator_poll_interval(hass: HomeAssistant) -> None:
@@ -255,6 +280,66 @@ async def test_coordinator_prefers_external_sensor_temperature(
 
     assert coordinator.data is not None
     assert coordinator.data[1].temperature == 23.34
+
+
+async def test_room_refresh_updates_nested_fan_telemetry_without_control() -> None:
+    """The existing rooms request refreshes fan state without issuing a command."""
+    payload = deepcopy(ROOM_API_PAYLOAD)
+    fan_payload = {
+        "id": 144288,
+        "fan_id": "fan_1",
+        "mode": "eco",
+        "fan_on": True,
+        "firmware_version": "20308",
+        "is_room_estimating": False,
+        "connected": True,
+        "power": 3800,
+        "predicted_room_temperature": "21.0",
+        "room_id": 1,
+        "thermostat_vendor": "nonsmart",
+        "mqtt_username": "test",
+        "mqtt_password": "test",
+    }
+    payload["rooms"][0]["fans"] = [fan_payload]
+    scmanager = _mock_scmanager()
+    fan = scmanager.fans["fan_1"]
+    fan.async_update_api_data = AsyncMock(return_value=True)
+    scmanager._api.async_request = AsyncMock(return_value=payload)
+
+    await async_fetch_rooms(scmanager)
+
+    fan.async_update_api_data.assert_awaited_once_with(fan_payload)
+    assert not any(
+        method.mock_calls
+        for method in (
+            scmanager.async_fan_turn_on,
+            scmanager.async_fan_turn_off,
+            scmanager.async_set_fan_speed,
+        )
+    )
+
+
+async def test_observed_fan_speed_reports_zero_while_off(
+    hass: HomeAssistant,
+) -> None:
+    """Observed speed distinguishes configured Eco power from actual operation."""
+    config_entry = _config_entry()
+    scmanager = _mock_scmanager()
+    fan = scmanager.fans["fan_1"]
+    fan.connected = True
+    fan.fan_on = False
+    fan.speed_pct = 38
+    fan.room_name = "Living Room"
+    coordinator = SmartCocoonRoomCoordinator(hass, scmanager, config_entry)
+    sensor = SmartCocoonObservedFanSpeedSensor(coordinator, scmanager, "fan_1")
+
+    assert sensor.native_value == 0
+
+    fan.fan_on = True
+
+    assert sensor.native_value == 38
+    assert sensor.available is True
+    assert sensor.force_update is True
 
 
 async def test_api_failure_marks_coordinator_stale(hass: HomeAssistant) -> None:
