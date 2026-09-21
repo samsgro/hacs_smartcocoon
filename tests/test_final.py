@@ -759,21 +759,31 @@ async def test_async_setup_entry(hass: HomeAssistant) -> None:
     mock_controller.scmanager.fans = {}
     mock_controller.enable_preset_modes = True
 
+    async def fake_start(self: SmartCocoonController) -> bool:
+        self._scmanager = MagicMock()  # pylint: disable=protected-access
+        self._scmanager.fans = {}  # pylint: disable=protected-access
+        return True
+
     with (
-        patch.object(
-            SmartCocoonController, "async_start", return_value=True
-        ) as mock_start,
+        patch.object(SmartCocoonController, "async_start", fake_start),
         patch.object(
             hass.config_entries, "async_forward_entry_setups", return_value=None
         ) as mock_forward,
+        patch(
+            "custom_components.smartcocoon.SmartCocoonRoomCoordinator"
+        ) as mock_coordinator_class,
     ):
+        mock_coordinator = MagicMock()
+        mock_coordinator.async_config_entry_first_refresh = AsyncMock()
+        mock_coordinator_class.return_value = mock_coordinator
+
         result = await async_setup_entry(hass, config_entry)
 
         assert result is True
         assert DOMAIN in hass.data
         assert config_entry.entry_id in hass.data[DOMAIN]
-        mock_start.assert_called_once()
         mock_forward.assert_called_once()
+        mock_coordinator.async_config_entry_first_refresh.assert_awaited_once()
 
 
 async def test_async_unload_entry(hass: HomeAssistant) -> None:
@@ -793,7 +803,9 @@ async def test_async_unload_entry(hass: HomeAssistant) -> None:
     )
 
     # Setup initial data
-    hass.data[DOMAIN] = {config_entry.entry_id: MagicMock()}
+    controller = MagicMock()
+    controller.async_stop = AsyncMock()
+    hass.data[DOMAIN] = {config_entry.entry_id: controller}
 
     with patch.object(
         hass.config_entries, "async_unload_platforms", return_value=True
@@ -803,6 +815,7 @@ async def test_async_unload_entry(hass: HomeAssistant) -> None:
         assert result is True
         assert config_entry.entry_id not in hass.data[DOMAIN]
         mock_unload.assert_called_once()
+        controller.async_stop.assert_awaited_once()
 
 
 async def test_async_unload_entry_failure(hass: HomeAssistant) -> None:
