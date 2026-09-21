@@ -1,4 +1,11 @@
 {
+  "entity": {
+    "sensor": {
+      "room_temperature": {
+        "name": "Temperature"
+      }
+    }
+  },
   "config": {
     "abort": {
       "already_configured": "Device is already configured"

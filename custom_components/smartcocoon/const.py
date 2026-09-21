@@ -1,6 +1,9 @@
 """Constants for the SmartCocoon integration."""
 
+from datetime import timedelta
+
 ATTR_ROOM_NAME = "room_name"
+ROOM_TEMPERATURE_UPDATE_INTERVAL = timedelta(seconds=60)
 CONF_ENABLE_PRESET_MODES = "enable_preset_modes"
 CONF_MAX_OFFLINE_DURATION = "max_offline_duration"
 CONF_RECOVERY_ATTEMPT_INTERVAL = "recovery_attempt_interval"

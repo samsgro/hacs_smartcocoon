@@ -31,11 +31,12 @@ from .const import (
     DEFAULT_RECOVERY_RESET_INTERVAL,
     DOMAIN,
 )
+from .coordinator import SmartCocoonRoomCoordinator
 from .error_handler import RetryConfig, SmartCocoonErrorHandler
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["fan"]
+PLATFORMS = ["fan", "sensor"]
 
 
 class SmartCocoonController:
@@ -60,6 +61,7 @@ class SmartCocoonController:
         self._hass: HomeAssistant = hass
         self._session: ClientSession | None = None
         self._connection_monitor: ConnectionMonitor | None = None
+        self._room_coordinator: SmartCocoonRoomCoordinator | None = None
         self._max_offline_duration = max_offline_duration
         self._recovery_attempt_interval = recovery_attempt_interval
         self._max_recovery_attempts_per_hour = max_recovery_attempts_per_hour
@@ -149,12 +151,31 @@ class SmartCocoonController:
         """Return the connection monitor instance."""
         return self._connection_monitor
 
+    @property
+    def room_coordinator(self) -> SmartCocoonRoomCoordinator | None:
+        """Return the room temperature coordinator."""
+        return self._room_coordinator
+
+    def set_room_coordinator(self, coordinator: SmartCocoonRoomCoordinator) -> None:
+        """Attach the room temperature coordinator."""
+        self._room_coordinator = coordinator
+
     async def async_stop(self) -> None:
-        """Stop the SmartCocoon Manager and cleanup resources."""
+        """Stop connection monitoring.
+
+        The room coordinator registers ``async_shutdown`` on config entry unload.
+        """
         if self._connection_monitor:
             await self._connection_monitor.stop_monitoring()
             self._connection_monitor = None
         _LOGGER.debug("SmartCocoon services stopped")
+
+    async def async_stop_after_failed_setup(self) -> None:
+        """Release resources when setup fails after ``async_start``."""
+        if self._room_coordinator is not None:
+            await self._room_coordinator.async_shutdown()
+            self._room_coordinator = None
+        await self.async_stop()
 
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
@@ -197,15 +218,29 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 
     await smartcocoon.async_start()
 
+    if smartcocoon.scmanager is None:
+        msg = "SmartCocoon manager failed to initialize"
+        raise RuntimeError(msg)
+
+    room_coordinator = SmartCocoonRoomCoordinator(
+        hass, smartcocoon.scmanager, config_entry
+    )
+    smartcocoon.set_room_coordinator(room_coordinator)
+
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][config_entry.entry_id] = smartcocoon
 
-    await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
-
-    # Register services
-    await _async_register_services(hass, smartcocoon)
-
-    config_entry.async_on_unload(config_entry.add_update_listener(async_update_options))
+    try:
+        await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
+        await room_coordinator.async_refresh()
+        await _async_register_services(hass, smartcocoon)
+        config_entry.async_on_unload(
+            config_entry.add_update_listener(async_update_options)
+        )
+    except Exception:
+        await smartcocoon.async_stop_after_failed_setup()
+        hass.data[DOMAIN].pop(config_entry.entry_id, None)
+        raise
 
     return True
 
@@ -291,11 +326,17 @@ async def async_update_options(hass: HomeAssistant, config_entry: ConfigEntry) -
 async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Unload a config entry."""
 
+    smartcocoon: SmartCocoonController | None = hass.data.get(DOMAIN, {}).get(
+        config_entry.entry_id
+    )
+
     unload_ok: bool = await hass.config_entries.async_unload_platforms(
         config_entry, PLATFORMS
     )
 
     if unload_ok:
+        if smartcocoon is not None:
+            await smartcocoon.async_stop()
         hass.data[DOMAIN].pop(config_entry.entry_id)
 
     return unload_ok
