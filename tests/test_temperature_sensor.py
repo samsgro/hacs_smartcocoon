@@ -181,6 +181,41 @@ async def test_sensor_setup_uses_manager_rooms_when_refresh_not_ready(
     assert added[0].available is False
 
 
+async def test_sensor_setup_adds_rooms_discovered_after_platform_setup(
+    hass: HomeAssistant,
+) -> None:
+    """The first coordinator refresh can discover rooms after platform setup."""
+    config_entry = _config_entry()
+    scmanager = _mock_scmanager()
+    coordinator = SmartCocoonRoomCoordinator(hass, scmanager, config_entry)
+
+    controller = MagicMock(spec=SmartCocoonController)
+    controller.room_coordinator = coordinator
+    controller.scmanager = scmanager
+    hass.data[DOMAIN] = {config_entry.entry_id: controller}
+
+    added: list[SmartCocoonRoomTemperatureSensor] = []
+
+    def capture(entities: list[SmartCocoonRoomTemperatureSensor]) -> None:
+        added.extend(entities)
+
+    await sensor_async_setup_entry(hass, config_entry, capture)
+    assert not added
+
+    coordinator.async_set_updated_data(
+        {1: RoomTemperatureReading(1, "Living Room", 20.5)}
+    )
+
+    assert len(added) == 1
+    assert added[0]._room_id == 1
+    assert added[0].native_value == 20.5
+
+    coordinator.async_set_updated_data(
+        {1: RoomTemperatureReading(1, "Living Room", 21.0)}
+    )
+    assert len(added) == 1
+
+
 async def test_coordinator_poll_interval(hass: HomeAssistant) -> None:
     """Room coordinator refreshes on a 60-second interval."""
     scmanager = _mock_scmanager()
