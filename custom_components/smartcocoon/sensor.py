@@ -37,22 +37,31 @@ async def async_setup_entry(
         _LOGGER.debug("Room temperature coordinator missing; skipping sensors")
         return
 
-    room_ids: set[int] = set()
-    if coordinator.data:
-        room_ids.update(coordinator.data)
-    scmanager = smartcocoon.scmanager
-    if scmanager is not None:
-        room_ids.update(scmanager.rooms)
+    added_room_ids: set[int] = set()
 
-    if not room_ids:
-        _LOGGER.debug("No SmartCocoon rooms discovered for temperature sensors")
-        return
+    def _add_discovered_rooms() -> None:
+        """Add sensors for rooms discovered during startup or later refreshes."""
+        room_ids: set[int] = set()
+        if coordinator.data:
+            room_ids.update(coordinator.data)
+        scmanager = smartcocoon.scmanager
+        if scmanager is not None:
+            room_ids.update(scmanager.rooms)
 
-    entities = [
-        SmartCocoonRoomTemperatureSensor(coordinator, room_id)
-        for room_id in sorted(room_ids)
-    ]
-    async_add_entities(entities)
+        new_room_ids = room_ids - added_room_ids
+        if not new_room_ids:
+            return
+
+        added_room_ids.update(new_room_ids)
+        async_add_entities(
+            [
+                SmartCocoonRoomTemperatureSensor(coordinator, room_id)
+                for room_id in sorted(new_room_ids)
+            ]
+        )
+
+    config_entry.async_on_unload(coordinator.async_add_listener(_add_discovered_rooms))
+    _add_discovered_rooms()
 
     _LOGGER.debug("Completed room temperature sensor setup")
 
